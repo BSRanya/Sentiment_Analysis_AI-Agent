@@ -18,3 +18,9 @@ backend/.env
 node_modules/
 .next/
 out/
+
+
+
+#otherfiles 
+backend/doc.txt
+backend/agent.txt

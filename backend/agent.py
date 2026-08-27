@@ -12,7 +12,7 @@ from tools import TOOLS , TOOL_FUNCTIONS
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class agent :
+class Agent :
     def __init__(self):
         self.messages:List[Dict[str , Any]] = [{"role":"system", "content" : SYSTEM_PROMPT}]
         self.client=httpx.AsyncClient(
@@ -34,7 +34,7 @@ class agent :
                 json=payload,)
             resp.raise_for_status()
             data= resp.json()
-            return data["choice"][0]["message"]
+            return data["choices"][0]["message"]
         except httpx.HTTPStatusError as e :
             logger.error(f"LLM API error: {e.response.status_code} {e.response.text}")
             raise
@@ -56,3 +56,53 @@ class agent :
                 #Run sync function in thread to avoid blocking event loop
                 if asyncio.iscoroutinefunction(tool_func):
                     result = await tool_func(**args)
+                else :
+                    result = await asyncio.to_thread(tool_func, **args)
+
+                #Ensure result is a string 
+                if not isinstance(result , str):
+                    result= json.dumps(result)
+                return result 
+        except asyncio.TimeoutError:
+            return f"Error: Tool '{func_name}' timed out after {TOOL_TIMEOUT}"
+        except Exception as e :
+            logger.exception(f"tool {func_name} raised exception: {e}")
+            return f"Error : Tool execution failed: {str(e)}"
+    
+    async def run (self, user_query : str) ->str :
+        """Main agent loop."""
+        self.messages.append({"role": "user", "content": user_query})
+
+        for iteration in range(MAX_ITERATIONS):
+            logger.info(f"---Iteration {iteration+1}---")
+            assistant_msg =await self.call_llm()
+            self.messages.append(assistant_msg) #add to history
+
+            tool_calls = assistant_msg.get("tool_calls")
+            if not tool_calls:
+                # No tool calls , assume final answer 
+                return assistant_msg.get("content" , "No response.")
+            
+
+            #Process each tool call 
+
+            for tool_call in tool_calls:
+                tool_call_id = tool_call["id"]
+                func_name = tool_call["function"]["name"]
+                args_str = tool_call["function"]["arguments"]
+                logger.info(f"Calling tool: {func_name} with args: {args_str}")
+
+                result = await self.execute_tool(tool_call)
+                logger.info(f"Tool result: {result[:200]}...")
+
+                #Append tool result message to conversation
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": result,
+                })
+
+        return "Max iterations reached without final answer."
+
+    async def close(self):
+        await self.client.aclose()
