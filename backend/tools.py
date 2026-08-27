@@ -34,12 +34,45 @@ def sentiment_analysis(data: SentimentInput) -> str :
         scores= analyzer.polarity_scores(data.text)
         compound =scores['compound']
 
-    #decide label
+        #decide label
 
-    if compound >=0.05:
-        sentiment = "positive"
-    elif compound <= -0.05:
-        sentiment = "negative"
-    else :
-        sentiment ="neutral"
-        
+        if compound >=0.05:
+            sentiment = "positive"
+        elif compound <= -0.05:
+            sentiment = "negative"
+        else :
+            sentiment ="neutral"
+            
+        #confidence :  absolute compound score mapped to 0-1(rough)
+        confidence =min(abs(compound)*2 , 1.0)
+
+        result = SentimentOutput(
+            sentiment=sentiment ,
+            confidence= round(confidence, 3),
+            scores=scores
+        )
+
+        logger.info(f"Sentiment analysis result: {result.model_dump()}")
+        return json.dumps(result.model_dump())
+
+    except Exception as e : 
+        logger.error(f"Sentiment analysis failed : {e}")
+        return f"Error : {str(e)}"
+    
+    #-------------Tool registry------------------
+TOOLS=[
+    {
+        "type": "function",
+        "function": {
+            "name": "sentiment_analysis",
+            "description": sentiment_analysis.__doc__,
+            "parameters": SentimentInput.model_json_schema()
+        }
+    }
+]
+
+
+
+TOOL_FUNCTIONS = {
+    "sentiment_analysis": sentiment_analysis,
+}
