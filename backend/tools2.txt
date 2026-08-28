@@ -1,0 +1,81 @@
+#need to install required packages : uv add transformers  torch
+
+import json
+import logging
+from typing import Dict
+
+from pydantic import BaseModel, Field, validate_call
+from transformers import pipeline
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ---------- Load sentiment pipeline once (global) ----------
+# This may take a few seconds on first run, and downloads the model.
+# For production, you'd want to load from local files to avoid download each start.
+
+sentiment_pipeline = pipeline(
+    "sentiment-analysis",
+    model="cardiffnlp/twitter-roberta-base-sentiment-latest",
+    tokenizer="cardiffnlp/twitter-roberta-base-sentiment-latest",
+    device=-1  # -1 = CPU, 0 = GPU if available
+)
+
+# ---------- Input/Output schemas ----------
+
+class SentimentInput(BaseModel):
+    text: str= Field(...,description="The text to analyse sentiment of.")
+
+class SentimentOutput(BaseModel):
+    sentiment: str          # positive, negative, neutral
+    confidence: float       # between 0 and 1
+    scores: Dict[str, float]  # optional: we can include raw label scores if we get them
+    
+# ---------- Tool function ----------
+@validate_call
+def sentiment_analysis(data: SentimentInput) -> str :
+    """
+    Analyse the sentiment of the given text using a transformer model.
+    Returns sentiment label (positive/negative/neutral) with confidence score.
+    Use this tool whenever the user asks about sentiment, emotion, or opinion in a text.
+    """
+    try:
+        #Run interface
+        result = sentiment_pipeline(data.text)[0]
+        label = result['label'].lower()  # 'positive', 'negative', 'neutral'
+        confidence = result['score']
+
+        #the pipeline returns a single score for the predicted label.
+        #we can optionally get probabilities for all labels by using return_all_scores=True,
+        #will keep it simple , we can compute a dict of label ->score if needed.
+        #For compatibility with the old SentimentOutput ,we include scores dict with only the predicted label.
+        scores = {label: confidence}
+        output = SentimentOutput(
+            sentiment= label,
+            confidence=round(confidence,4),
+            scores=scores
+        )
+        logger.info(f"Sentiment analysis result : {output.model_dump()}")
+        return json.dumps(output.model_dump())
+    
+    except Exception as e :
+        logger.error(f"sentiment analysis failed: {e}")
+        return f"Error: {str(e)}"
+    
+
+#-------------tool registry------------------
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "sentiment_analysis",
+            "description": sentiment_analysis.__doc__,
+            "parameters": SentimentInput.model_json_schema()
+        }
+    }
+]
+
+
+TOOL_FUNCTIONS = {
+    "sentiment_analysis": sentiment_analysis,
+}
